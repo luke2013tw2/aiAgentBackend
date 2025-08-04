@@ -128,10 +128,15 @@ def lint_code():
 def start_server():
     """啟動服務器"""
     print("🚀 啟動 AI Agent Backend 服務器...")
-    print("📍 服務器將在 http://localhost:8000 運行")
-    print("📖 API 文檔: http://localhost:8000/docs")
+    print("=" * 60)
+    print("📍 服務器網址:")
+    print("   🌐 主頁面: http://localhost:8000")
+    print("   📖 API 文檔: http://localhost:8000/docs")
+    print("   🔍 健康檢查: http://localhost:8000/health")
+    print("   ℹ️  Agent 資訊: http://localhost:8000/agent-info")
+    print("=" * 60)
     print("🔄 按 Ctrl+C 停止服務器")
-    print("-" * 50)
+    print("-" * 60)
     
     try:
         subprocess.run(['uv', 'run', 'python', 'main.py'])

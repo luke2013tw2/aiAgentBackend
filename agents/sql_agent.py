@@ -11,6 +11,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import RunnablePassthrough
 
+from mcp.database_client import DatabaseMCPClient
+
 class SQLAgent:
     """
     SQL Agent - 具有 reason、action、observe 功能的 AI Agent
@@ -29,6 +31,10 @@ class SQLAgent:
             temperature=0.1,
             api_key=os.getenv("OPENAI_API_KEY")
         )
+        
+        # 初始化 MCP Client
+        self.mcp_client = DatabaseMCPClient()
+        self.mcp_connected = False
         
         # 初始化資料庫
         self._init_database()
@@ -173,17 +179,18 @@ class SQLAgent:
         """建立 LangGraph 工作流程"""
         
         # 定義狀態結構
-        class AgentState:
-            def __init__(self):
-                self.query: str = ""
-                self.reasoning: str = ""
-                self.sql_query: str = ""
-                self.execution_result: Any = None
-                self.response: str = ""
-                self.context: Dict[str, Any] = {}
+        from typing import TypedDict, Annotated
+        
+        class AgentState(TypedDict):
+            query: str
+            reasoning: str
+            sql_query: str
+            execution_result: Any
+            response: str
+            context: Dict[str, Any]
         
         # 1. REASON: 分析查詢意圖
-        def reason(state: Dict[str, Any]) -> Dict[str, Any]:
+        def reason(state: AgentState) -> AgentState:
             """分析使用者查詢意圖"""
             query = state["query"]
             schema = self._get_database_schema()
@@ -218,7 +225,7 @@ class SQLAgent:
             }
         
         # 2. ACTION: 生成並執行 SQL
-        def action(state: Dict[str, Any]) -> Dict[str, Any]:
+        async def action(state: AgentState) -> AgentState:
             """生成並執行 SQL 查詢"""
             query = state["query"]
             reasoning = state["reasoning"]
@@ -244,33 +251,15 @@ class SQLAgent:
             response = self.llm.invoke(messages)
             sql_query = self._extract_sql_query(response.content)
             
-            # 執行 SQL 查詢
+            # 使用 MCP Client 執行 SQL 查詢
             try:
-                conn = self._get_connection()
-                cursor = conn.cursor()
-                cursor.execute(sql_query)
+                # 確保 MCP Client 已連接
+                if not self.mcp_connected:
+                    await self.mcp_client.connect()
+                    self.mcp_connected = True
                 
-                if sql_query.strip().upper().startswith("SELECT"):
-                    # SELECT 查詢
-                    columns = [description[0] for description in cursor.description]
-                    rows = cursor.fetchall()
-                    result = {
-                        "type": "select",
-                        "columns": columns,
-                        "rows": [dict(zip(columns, row)) for row in rows],
-                        "count": len(rows)
-                    }
-                else:
-                    # DML 查詢
-                    conn.commit()
-                    result = {
-                        "type": "dml",
-                        "affected_rows": cursor.rowcount,
-                        "message": "操作執行成功"
-                    }
-                
-                conn.close()
-                execution_result = result
+                # 通過 MCP 執行查詢
+                execution_result = await self.mcp_client.call_tool("execute_query", {"sql": sql_query})
                 
             except Exception as e:
                 execution_result = {
@@ -286,7 +275,7 @@ class SQLAgent:
             }
         
         # 3. OBSERVE: 觀察結果並格式化回應
-        def observe(state: Dict[str, Any]) -> Dict[str, Any]:
+        def observe(state: AgentState) -> AgentState:
             """觀察執行結果並生成回應"""
             query = state["query"]
             reasoning = state["reasoning"]
@@ -369,6 +358,10 @@ class SQLAgent:
         # 準備初始狀態
         initial_state = {
             "query": query,
+            "reasoning": "",
+            "sql_query": "",
+            "execution_result": None,
+            "response": "",
             "context": context
         }
         
@@ -406,10 +399,13 @@ class SQLAgent:
             "schema": self._get_database_schema()
         }
     
-    def close(self):
-        """關閉資料庫連接（已不需要，因為每次都使用新連接）"""
-        pass
+    async def close(self):
+        """關閉 MCP Client 連接"""
+        if self.mcp_connected:
+            await self.mcp_client.disconnect()
+            self.mcp_connected = False
     
     def __del__(self):
         """解構函數"""
+        # 注意：這裡無法使用 await，所以只是標記
         pass 
