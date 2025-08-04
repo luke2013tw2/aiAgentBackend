@@ -1,10 +1,11 @@
 # AI Agent Backend
 
-Python 後端 API 程式，整合 LangChain 和 LangGraph 開發的 AI Agent。
+Python 後端 API 程式，整合 LangChain 和 LangGraph 開發的 AI Agent，支援 MCP (Model Context Protocol) 架構。
 
 ## 專案特色
 
 - **單一 AI Agent**: 具有 `reason`、`action`、`observe` 功能的 SQL Agent
+- **MCP 架構**: Agent 透過 MCP Client 連接 MCP Server 存取資料庫
 - **自然語言查詢**: 將自然語言轉換為 SQL 查詢
 - **SQLite 資料庫**: 內建範例資料，支援複雜查詢
 - **LangGraph 工作流程**: 使用 LangChain 和 LangGraph 建立 AI Agent
@@ -231,12 +232,17 @@ aiAgentBackend/
 ├── start_uv.py           # uv 啟動腳本
 ├── start.py              # 傳統啟動腳本
 ├── test_api.py           # API 測試腳本
+├── test_mcp_integration.py # MCP 整合測試
 ├── Makefile              # 開發命令
 ├── .gitignore            # Git 忽略檔案
 ├── README.md             # 專案說明
 ├── agents/
 │   ├── __init__.py       # 套件初始化
-│   └── sql_agent.py      # SQL Agent 實作
+│   └── sql_agent.py      # SQL Agent 實作（整合 MCP）
+├── mcp/
+│   ├── __init__.py       # MCP 模組初始化
+│   ├── database_server.py # MCP Database Server
+│   └── database_client.py # MCP Database Client
 ├── tests/
 │   ├── __init__.py       # 測試套件初始化
 │   └── test_sql_agent.py # SQL Agent 測試
@@ -264,6 +270,45 @@ DATABASE_PATH=data/ai_agent.db
 LOG_LEVEL=INFO
 ```
 
+## MCP 架構
+
+本專案採用 MCP (Model Context Protocol) 架構，實現 AI Agent 與外部系統的解耦：
+
+### 架構組成
+
+1. **MCP Server** (`mcp/database_server.py`)
+   - 提供資料庫操作功能
+   - 支援的工具：
+     - `get_database_schema`: 取得資料庫結構
+     - `execute_query`: 執行 SQL 查詢
+     - `get_table_info`: 取得表格資訊
+     - `get_sample_data`: 取得範例資料
+
+2. **MCP Client** (`mcp/database_client.py`)
+   - 連接 MCP Server
+   - 提供統一的工具調用介面
+   - 處理與 Server 的通訊
+
+3. **SQL Agent** (`agents/sql_agent.py`)
+   - 透過 MCP Client 存取資料庫
+   - 實現 reason-action-observe 工作流程
+   - 將自然語言轉換為 SQL 查詢
+
+### 工作流程
+
+```
+使用者查詢 → SQL Agent → MCP Client → MCP Server → SQLite 資料庫
+                ↓
+            自然語言回應 ← 格式化結果 ← 查詢結果
+```
+
+### 優勢
+
+- **解耦**: Agent 與資料庫操作分離
+- **擴展性**: 可輕鬆添加新的 MCP Server
+- **標準化**: 使用標準 MCP 協議
+- **可維護性**: 清晰的架構分工
+
 ## 技術架構
 
 - **FastAPI**: 高效能 Python Web 框架
@@ -271,6 +316,7 @@ LOG_LEVEL=INFO
 - **LangGraph**: 狀態化多角色應用程式開發
 - **OpenAI GPT**: 大型語言模型
 - **SQLite**: 輕量級關聯式資料庫
+- **MCP**: Model Context Protocol 標準
 - **uv**: 快速 Python 套件管理工具
 - **Pydantic**: 資料驗證和設定管理
 
