@@ -253,9 +253,16 @@ class SQLAgentGemini:
             response = self.llm.invoke(messages)
             sql_query = self._extract_sql_query(response.content)
             
-            # 執行 SQL 查詢
+            # 使用 MCP Client 執行 SQL 查詢
             try:
-                execution_result = self._execute_sql_query(sql_query)
+                # 確保 MCP Client 已連接
+                if not self.mcp_connected:
+                    await self.mcp_client.connect()
+                    self.mcp_connected = True
+                
+                # 通過 MCP 執行查詢
+                execution_result = await self.mcp_client.call_tool("execute_query", {"sql": sql_query})
+                
             except Exception as e:
                 execution_result = {
                     "type": "error",
