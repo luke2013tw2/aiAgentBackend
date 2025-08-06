@@ -14,14 +14,18 @@ Python 後端 API 程式，整合 LangChain 和 LangGraph 開發的 AI Agent，�
 
 ## 安裝與執行
 
-### 方法一：使用 uv（推薦）
+### 虛擬環境管理
+
+本專案支援多種虛擬環境管理方式，推薦使用虛擬環境來隔離依賴套件。
+
+#### 方法一：使用 uv（推薦）
 
 1. **安裝 uv**（如果尚未安裝）：
    ```bash
    pip install uv
    ```
 
-2. **安裝依賴**：
+2. **建立並安裝依賴**：
    ```bash
    uv sync
    ```
@@ -29,7 +33,7 @@ Python 後端 API 程式，整合 LangChain 和 LangGraph 開發的 AI Agent，�
 3. **設定環境變數**：
    ```bash
    cp env.example .env
-   # 編輯 .env 檔案，填入您的 OpenAI API Key
+   # 編輯 .env 檔案，填入您的 API Key
    ```
 
 4. **執行應用程式**：
@@ -37,7 +41,64 @@ Python 後端 API 程式，整合 LangChain 和 LangGraph 開發的 AI Agent，�
    uv run python main.py
    ```
 
-### 方法二：使用傳統 pip
+#### 方法二：使用 Python 虛擬環境
+
+1. **建立虛擬環境**：
+   ```bash
+   python -m venv .venv
+   ```
+
+2. **啟動虛擬環境**：
+   ```bash
+   # Windows PowerShell
+   .venv\Scripts\Activate.ps1
+   
+   # Windows Command Prompt
+   .venv\Scripts\activate.bat
+   
+   # Linux/macOS
+   source .venv/bin/activate
+   ```
+
+3. **安裝依賴套件**：
+   ```bash
+   # 基本套件
+   pip install fastapi uvicorn python-dotenv
+   
+   # Gemini 相關套件
+   pip install google-generativeai langchain-google-genai
+   
+   # LangChain 相關套件
+   pip install langchain langgraph
+   
+   # 或使用 requirements.txt
+   pip install -r requirements.txt
+   ```
+
+4. **設定環境變數**：
+   ```bash
+   cp env.example .env
+   # 編輯 .env 檔案，填入您的 API Key
+   ```
+
+5. **執行應用程式**：
+   ```bash
+   # OpenAI 版本
+   python main.py
+   
+   # Gemini 版本
+   python main_gemini.py
+   
+   # Mock 版本（無需 API Key）
+   python main_mock.py
+   ```
+
+6. **停止虛擬環境**：
+   ```bash
+   deactivate
+   ```
+
+#### 方法三：使用傳統 pip（全域安裝）
 
 1. **安裝依賴**：
    ```bash
@@ -47,13 +108,107 @@ Python 後端 API 程式，整合 LangChain 和 LangGraph 開發的 AI Agent，�
 2. **設定環境變數**：
    ```bash
    cp env.example .env
-   # 編輯 .env 檔案，填入您的 OpenAI API Key
+   # 編輯 .env 檔案，填入您的 API Key
    ```
 
 3. **執行應用程式**：
    ```bash
    python main.py
    ```
+
+### 虛擬環境管理命令
+
+#### 基本操作
+```bash
+# 建立虛擬環境
+python -m venv .venv
+
+# 啟動虛擬環境
+.venv\Scripts\Activate.ps1  # Windows PowerShell
+source .venv/bin/activate    # Linux/macOS
+
+# 停止虛擬環境
+deactivate
+
+# 刪除虛擬環境
+Remove-Item -Recurse -Force .venv  # Windows PowerShell
+rm -rf .venv                       # Linux/macOS
+```
+
+#### 套件管理
+```bash
+# 查看已安裝套件
+pip list
+
+# 安裝特定套件
+pip install package-name
+
+# 強制重新安裝套件
+pip install --force-reinstall package-name
+
+# 升級 pip
+python -m pip install --upgrade pip
+```
+
+#### 環境變數管理
+```bash
+# 複製環境變數範例
+cp env.example .env
+
+# 編輯環境變數（使用您喜歡的編輯器）
+notepad .env  # Windows
+nano .env     # Linux/macOS
+```
+
+### 不同版本的執行方式
+
+本專案提供多個版本以支援不同的 API：
+
+#### 1. OpenAI 版本（原始版本）
+```bash
+python main.py
+```
+- 使用 OpenAI GPT 模型
+- 需要設定 `OPENAI_API_KEY`
+
+#### 2. Gemini 版本（Google AI）
+```bash
+python main_gemini.py
+```
+- 使用 Google Gemini 模型
+- 需要設定 `GEMINI_API_KEY`
+- 支援中文查詢
+
+#### 3. Mock 版本（測試用）
+```bash
+python main_mock.py
+```
+- 使用模擬 LLM
+- 無需 API Key
+- 適合開發和測試
+
+### 環境變數設定
+
+根據您要使用的版本，在 `.env` 檔案中設定相應的 API Key：
+
+```env
+# OpenAI API 設定
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Google Gemini API 設定
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# 應用程式設定
+APP_HOST=0.0.0.0
+APP_PORT=8000
+DEBUG=True
+
+# 資料庫設定（如果需要）
+# DATABASE_URL=sqlite:///./ai_agent.db
+
+# 日誌設定
+LOG_LEVEL=INFO
+```
 
 ## API 端點
 
@@ -225,20 +380,27 @@ make dev          # 完整開發工作流程
 
 ```
 aiAgentBackend/
-├── main.py                 # FastAPI 應用程式主檔案
+├── main.py                 # FastAPI 應用程式主檔案（OpenAI 版本）
+├── main_gemini.py         # FastAPI 應用程式主檔案（Gemini 版本）
+├── main_mock.py           # FastAPI 應用程式主檔案（Mock 版本）
 ├── pyproject.toml          # uv 專案配置
 ├── requirements.txt        # pip 依賴（備用）
 ├── env.example            # 環境變數範例
 ├── start_uv.py           # uv 啟動腳本
 ├── start.py              # 傳統啟動腳本
 ├── test_api.py           # API 測試腳本
+├── test_openai_key.py    # OpenAI API Key 測試
+├── test_gemini_key.py    # Gemini API Key 測試
 ├── test_mcp_integration.py # MCP 整合測試
 ├── Makefile              # 開發命令
 ├── .gitignore            # Git 忽略檔案
 ├── README.md             # 專案說明
+├── .venv/                # Python 虛擬環境（自動建立）
 ├── agents/
 │   ├── __init__.py       # 套件初始化
-│   └── sql_agent.py      # SQL Agent 實作（整合 MCP）
+│   ├── sql_agent.py      # SQL Agent 實作（OpenAI 版本）
+│   ├── sql_agent_gemini.py # SQL Agent 實作（Gemini 版本）
+│   └── sql_agent_mock.py # SQL Agent 實作（Mock 版本）
 ├── mcp/
 │   ├── __init__.py       # MCP 模組初始化
 │   ├── database_server.py # MCP Database Server
@@ -254,10 +416,8 @@ aiAgentBackend/
 
 建立 `.env` 檔案並設定以下變數：
 
+### 基本設定
 ```env
-# OpenAI API 設定
-OPENAI_API_KEY=your_openai_api_key_here
-
 # 應用程式設定
 APP_HOST=0.0.0.0
 APP_PORT=8000
@@ -269,6 +429,58 @@ DATABASE_PATH=data/ai_agent.db
 # 日誌設定
 LOG_LEVEL=INFO
 ```
+
+### API Key 設定
+
+根據您要使用的版本，設定相應的 API Key：
+
+#### OpenAI 版本
+```env
+# OpenAI API 設定
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+#### Gemini 版本
+```env
+# Google Gemini API 設定
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+#### 完整範例
+```env
+# OpenAI API 設定
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Google Gemini API 設定
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# 應用程式設定
+APP_HOST=0.0.0.0
+APP_PORT=8000
+DEBUG=True
+
+# 資料庫設定（如果需要）
+# DATABASE_URL=sqlite:///./ai_agent.db
+
+# 日誌設定
+LOG_LEVEL=INFO
+```
+
+### 取得 API Key
+
+#### OpenAI API Key
+1. 前往 [OpenAI Platform](https://platform.openai.com/)
+2. 登入或註冊帳號
+3. 前往 API Keys 頁面
+4. 建立新的 API Key
+5. 複製並貼到 `.env` 檔案中
+
+#### Gemini API Key
+1. 前往 [Google Cloud Console](https://console.cloud.google.com/)
+2. 啟用 Generative AI API
+3. 前往 API & Services > Credentials
+4. 建立新的 API Key
+5. 複製並貼到 `.env` 檔案中
 
 ## MCP 架構
 

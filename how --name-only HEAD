@@ -1,0 +1,8 @@
+[33mfd79bd8[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m)[m fix: remove API key from env.example for security
+[33m48bb828[m update gitignore
+[33m5a681f4[m Reapply "add mcp server and client"
+[33m7f1d760[m Revert "add mcp server and client"
+[33me357e82[m Revert "don't update api key"
+[33m8c1da17[m don't update api key
+[33m49e107b[m add mcp server and client
+[33m893bbc5[m[33m ([m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m first commit
