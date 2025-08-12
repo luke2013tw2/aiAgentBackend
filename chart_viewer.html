@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent 圖表檢視器</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+        }
+        .chart-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+        .chart-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #e3f2fd;
+            border-radius: 5px;
+        }
+        .mermaid {
+            text-align: center;
+            margin: 20px 0;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .insights {
+            background: #e8f5e8;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #4caf50;
+        }
+        .insights h4 {
+            margin: 0 0 10px 0;
+            color: #2e7d32;
+        }
+        .data-info {
+            background: #fff3e0;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #ff9800;
+        }
+        .data-info h4 {
+            margin: 0 0 10px 0;
+            color: #e65100;
+        }
+        .input-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .input-section input[type="text"] {
+            width: 70%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        .input-section button {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-left: 10px;
+        }
+        .input-section button:hover {
+            background: #5a6fd8;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎨 AI Agent 圖表檢視器</h1>
+            <p>將 Mermaid 語法轉換為美觀的圖表</p>
+        </div>
+
+        <div class="input-section">
+            <h3>🔍 測試查詢</h3>
+            <input type="text" id="queryInput" placeholder="輸入查詢，例如：查詢所有產品的價格分布" value="查詢所有產品的價格分布">
+            <button onclick="executeQuery()">執行查詢</button>
+        </div>
+
+        <div id="loading" class="loading" style="display: none;">
+            <p>🔄 正在處理查詢，請稍候...</p>
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="results" style="display: none;">
+            <div class="chart-section">
+                <div class="chart-title">📊 圖表建議</div>
+                <div id="chartAdvice"></div>
+            </div>
+
+            <div class="chart-section">
+                <div class="chart-title">🎨 圖表顯示</div>
+                <div id="chartContainer" class="mermaid"></div>
+            </div>
+
+            <div class="chart-section">
+                <div class="chart-title">💡 關鍵洞察</div>
+                <div id="insights" class="insights"></div>
+            </div>
+
+            <div class="chart-section">
+                <div class="chart-title">📋 查詢結果</div>
+                <div id="dataInfo" class="data-info"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 初始化 Mermaid
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true
+            }
+        });
+
+        async function executeQuery() {
+            const query = document.getElementById('queryInput').value;
+            if (!query.trim()) {
+                alert('請輸入查詢內容');
+                return;
+            }
+
+            // 顯示載入狀態
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('results').style.display = 'none';
+
+            try {
+                const response = await fetch('http://localhost:8000/execute-agent', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: query,
+                        context: {}
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                
+                // 隱藏載入狀態
+                document.getElementById('loading').style.display = 'none';
+                
+                // 顯示結果
+                displayResults(result);
+                
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').innerHTML = `<strong>錯誤：</strong>${error.message}`;
+            }
+        }
+
+        function displayResults(result) {
+            // 顯示圖表建議
+            const chartAdvice = document.getElementById('chartAdvice');
+            if (result.chart_description && result.chart_description !== '無需生成圖表') {
+                // 提取圖表建議部分
+                const adviceMatch = result.chart_description.match(/## 圖表建議\s*([\s\S]*?)(?=##|$)/);
+                if (adviceMatch) {
+                    chartAdvice.innerHTML = adviceMatch[1].trim();
+                } else {
+                    chartAdvice.innerHTML = result.chart_description;
+                }
+            } else {
+                chartAdvice.innerHTML = '<p>此查詢不需要生成圖表</p>';
+            }
+
+            // 顯示圖表
+            const chartContainer = document.getElementById('chartContainer');
+            if (result.chart_description && result.chart_description.includes('```mermaid')) {
+                // 提取 Mermaid 代碼
+                const mermaidMatch = result.chart_description.match(/```mermaid\s*([\s\S]*?)\s*```/);
+                if (mermaidMatch) {
+                    const mermaidCode = mermaidMatch[1].trim();
+                    chartContainer.innerHTML = mermaidCode;
+                    // 重新渲染圖表
+                    mermaid.init();
+                } else {
+                    chartContainer.innerHTML = '<p>無法解析 Mermaid 代碼</p>';
+                }
+            } else {
+                chartContainer.innerHTML = '<p>無圖表代碼</p>';
+            }
+
+            // 顯示關鍵洞察
+            const insights = document.getElementById('insights');
+            if (result.chart_description && result.chart_description.includes('## 關鍵洞察')) {
+                const insightsMatch = result.chart_description.match(/## 關鍵洞察\s*([\s\S]*?)(?=##|$)/);
+                if (insightsMatch) {
+                    insights.innerHTML = `<h4>📈 分析洞察</h4><p>${insightsMatch[1].trim()}</p>`;
+                } else {
+                    insights.innerHTML = '<h4>📈 分析洞察</h4><p>無洞察資訊</p>';
+                }
+            } else {
+                insights.innerHTML = '<h4>📈 分析洞察</h4><p>無洞察資訊</p>';
+            }
+
+            // 顯示查詢結果
+            const dataInfo = document.getElementById('dataInfo');
+            if (result.data && result.data.success) {
+                const rowCount = result.data.row_count || 0;
+                dataInfo.innerHTML = `
+                    <h4>📊 查詢結果</h4>
+                    <p><strong>資料筆數：</strong>${rowCount}</p>
+                    <p><strong>生成的 SQL：</strong><code>${result.sql_generated}</code></p>
+                    <p><strong>回應：</strong>${result.response}</p>
+                `;
+            } else {
+                dataInfo.innerHTML = '<h4>📊 查詢結果</h4><p>查詢失敗或無資料</p>';
+            }
+
+            // 顯示結果區域
+            document.getElementById('results').style.display = 'block';
+        }
+
+        // 頁面載入完成後自動執行一次查詢
+        window.onload = function() {
+            // 可以選擇自動執行預設查詢
+            // executeQuery();
+        };
+    </script>
+</body>
+</html>

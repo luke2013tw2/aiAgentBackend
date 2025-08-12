@@ -1,21 +1,22 @@
+#!/usr/bin/env python3
+"""
+SQL Agent (OpenAI 版本)
+
+使用 OpenAI 模型和 LangGraph 開發的 SQL 查詢 Agent
+"""
+
 import os
-import sqlite3
-import asyncio
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 import json
-import threading
-
+import asyncio
+from typing import Dict, Any, List
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
-from langchain_core.runnables import RunnablePassthrough
-
 from mcp.database_client import DatabaseMCPClient
 
 class SQLAgent:
     """
-    SQL Agent - 具有 reason、action、observe 功能的 AI Agent
+    SQL Agent (OpenAI 版本)
     
     使用 LangChain 和 LangGraph 開發，能夠：
     - reason: 分析自然語言查詢意圖
@@ -23,9 +24,11 @@ class SQLAgent:
     - observe: 觀察結果並格式化回應
     """
     
-    def __init__(self, db_path: str = "data/ai_agent.db"):
+    def __init__(self, mcp_server_url: str = "http://localhost:8001"):
         """初始化 SQL Agent"""
-        self.db_path = db_path
+        self.mcp_server_url = mcp_server_url
+        
+        # 初始化 OpenAI LLM
         self.llm = ChatOpenAI(
             model="gpt-3.5-turbo",
             temperature=0.1,
@@ -33,147 +36,38 @@ class SQLAgent:
         )
         
         # 初始化 MCP Client
-        self.mcp_client = DatabaseMCPClient()
+        self.mcp_client = DatabaseMCPClient(mcp_server_url)
         self.mcp_connected = False
-        
-        # 初始化資料庫
-        self._init_database()
         
         # 建立 LangGraph 工作流程
         self.workflow = self._create_workflow()
     
-    def _init_database(self):
-        """初始化 SQLite 資料庫"""
-        # 確保 data 目錄存在
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
-        # 建立表格和範例資料
-        self._create_tables()
-        self._insert_sample_data()
-    
-    def _get_connection(self):
-        """取得新的資料庫連接"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-    
-    def _create_tables(self):
-        """建立資料庫表格"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 使用者表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE,
-                age INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # 產品表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                price REAL NOT NULL,
-                category TEXT,
-                stock INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # 訂單表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                product_id INTEGER,
-                quantity INTEGER,
-                total_price REAL,
-                order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (id),
-                FOREIGN KEY (product_id) REFERENCES products (id)
-            )
-        """)
-        
-        conn.commit()
-        conn.close()
-    
-    def _insert_sample_data(self):
-        """插入範例資料"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 檢查是否已有資料
-        cursor.execute("SELECT COUNT(*) FROM users")
-        if cursor.fetchone()[0] == 0:
-            # 插入使用者資料
-            users_data = [
-                ("張小明", "zhang@example.com", 25),
-                ("李小華", "li@example.com", 30),
-                ("王小美", "wang@example.com", 28),
-                ("陳小強", "chen@example.com", 35)
-            ]
-            cursor.executemany(
-                "INSERT INTO users (name, email, age) VALUES (?, ?, ?)",
-                users_data
-            )
+    async def _get_database_schema(self) -> str:
+        """從 MCP Server 取得資料庫結構資訊"""
+        try:
+            if not self.mcp_connected:
+                await self.mcp_client.connect()
+                self.mcp_connected = True
             
-            # 插入產品資料
-            products_data = [
-                ("iPhone 15", 29999.0, "手機", 50),
-                ("MacBook Pro", 59999.0, "筆電", 20),
-                ("AirPods Pro", 6999.0, "耳機", 100),
-                ("iPad Air", 19999.0, "平板", 30),
-                ("Apple Watch", 12999.0, "手錶", 40)
-            ]
-            cursor.executemany(
-                "INSERT INTO products (name, price, category, stock) VALUES (?, ?, ?, ?)",
-                products_data
-            )
+            schema = await self.mcp_client.get_schema()
+            tables = schema.get("tables", [])
             
-            # 插入訂單資料
-            orders_data = [
-                (1, 1, 2, 59998.0),
-                (2, 3, 1, 6999.0),
-                (3, 2, 1, 59999.0),
-                (1, 4, 1, 19999.0),
-                (4, 5, 1, 12999.0)
-            ]
-            cursor.executemany(
-                "INSERT INTO orders (user_id, product_id, quantity, total_price) VALUES (?, ?, ?, ?)",
-                orders_data
-            )
+            schema_info = []
+            for table in tables:
+                table_name = table.get("name", "")
+                columns = table.get("columns", [])
+                
+                schema_info.append(f"表格: {table_name}")
+                for col in columns:
+                    col_name = col.get("name", "")
+                    col_type = col.get("type", "")
+                    schema_info.append(f"  - {col_name} ({col_type})")
+                schema_info.append("")
             
-            conn.commit()
-        
-        conn.close()
-    
-    def _get_database_schema(self) -> str:
-        """取得資料庫結構資訊"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        schema_info = []
-        
-        # 取得所有表格
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        
-        for table in tables:
-            table_name = table[0]
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            columns = cursor.fetchall()
+            return "\n".join(schema_info)
             
-            schema_info.append(f"表格: {table_name}")
-            for col in columns:
-                schema_info.append(f"  - {col[1]} ({col[2]})")
-            schema_info.append("")
-        
-        conn.close()
-        return "\n".join(schema_info)
+        except Exception as e:
+            return f"無法取得資料庫結構: {str(e)}"
     
     def _create_workflow(self) -> StateGraph:
         """建立 LangGraph 工作流程"""
@@ -190,10 +84,10 @@ class SQLAgent:
             context: Dict[str, Any]
         
         # 1. REASON: 分析查詢意圖
-        def reason(state: AgentState) -> AgentState:
+        async def reason(state: AgentState) -> AgentState:
             """分析使用者查詢意圖"""
             query = state["query"]
-            schema = self._get_database_schema()
+            schema = await self._get_database_schema()
             
             system_prompt = f"""
             你是一個 SQL 查詢分析專家。請分析使用者的自然語言查詢，並理解其意圖。
@@ -229,7 +123,7 @@ class SQLAgent:
             """生成並執行 SQL 查詢"""
             query = state["query"]
             reasoning = state["reasoning"]
-            schema = self._get_database_schema()
+            schema = await self._get_database_schema()
             
             system_prompt = f"""
             你是一個 SQL 生成專家。根據使用者的查詢和分析結果，生成適當的 SQL 查詢。
@@ -375,29 +269,23 @@ class SQLAgent:
             "reasoning": result["reasoning"]
         }
     
-    def get_database_info(self) -> Dict[str, Any]:
+    async def get_database_info(self) -> Dict[str, Any]:
         """取得資料庫資訊"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 取得表格資訊
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        
-        table_info = {}
-        for table in tables:
-            table_name = table[0]
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-            count = cursor.fetchone()[0]
-            table_info[table_name] = {"row_count": count}
-        
-        conn.close()
-        
-        return {
-            "database_path": self.db_path,
-            "tables": table_info,
-            "schema": self._get_database_schema()
-        }
+        try:
+            if not self.mcp_connected:
+                await self.mcp_client.connect()
+                self.mcp_connected = True
+            
+            schema = await self.mcp_client.get_schema()
+            return {
+                "mcp_server_url": self.mcp_server_url,
+                "schema": schema
+            }
+        except Exception as e:
+            return {
+                "error": str(e),
+                "mcp_server_url": self.mcp_server_url
+            }
     
     async def close(self):
         """關閉 MCP Client 連接"""

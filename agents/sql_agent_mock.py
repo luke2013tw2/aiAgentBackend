@@ -1,215 +1,86 @@
+#!/usr/bin/env python3
+"""
+SQL Agent Mock 版本
+
+用於測試的模擬版本，不依賴真實的 LLM 和資料庫
+"""
+
 import os
-import sqlite3
-import asyncio
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 import json
-import threading
-
-from langchain_core.messages import HumanMessage, SystemMessage
+import asyncio
+from typing import Dict, Any, List
+from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
-from langchain_core.runnables import RunnablePassthrough
-
 from mcp.database_client import DatabaseMCPClient
 
 class MockLLM:
-    """模擬 LLM 類別，用於在沒有 API Key 時提供預設回應"""
+    """模擬 LLM 回應"""
     
     def __init__(self):
-        self.mock_responses = {
-            "reason": {
-                "查詢所有使用者": "這是一個 SELECT 查詢，需要從 users 表格中取得所有使用者資料。查詢類型：SELECT，需要的表格：users，查詢條件：無，預期結果：所有使用者資訊。",
-                "顯示所有產品": "這是一個 SELECT 查詢，需要從 products 表格中取得所有產品資料。查詢類型：SELECT，需要的表格：products，查詢條件：無，預期結果：所有產品資訊。",
-                "查詢訂單": "這是一個 SELECT 查詢，需要從 orders 表格中取得訂單資料。查詢類型：SELECT，需要的表格：orders，查詢條件：無，預期結果：所有訂單資訊。",
-                "default": "這是一個資料庫查詢請求。查詢類型：SELECT，需要的表格：根據查詢內容決定，查詢條件：根據查詢內容決定，預期結果：相關資料。"
-            },
-            "action": {
-                "查詢所有使用者": "SELECT * FROM users",
-                "顯示所有產品": "SELECT * FROM products", 
-                "查詢訂單": "SELECT * FROM orders",
-                "default": "SELECT * FROM users LIMIT 5"
-            },
-            "observe": {
-                "default": "根據您的查詢，我已經執行了相應的 SQL 查詢並取得了結果。查詢執行成功，返回了相關的資料。"
-            }
+        self.responses = {
+            "reason": "這是一個 SELECT 查詢，需要從 users 表格中取得使用者資訊。",
+            "sql": "SELECT * FROM users LIMIT 3",
+            "observe": "查詢成功執行，返回了 3 筆使用者資料。"
         }
     
     def invoke(self, messages):
         """模擬 LLM 回應"""
-        # 取得最後一個使用者訊息
-        user_message = None
-        for msg in messages:
-            if hasattr(msg, 'content'):
-                user_message = msg.content
-                break
+        content = messages[-1].content if messages else ""
         
-        if not user_message:
-            return type('MockResponse', (), {'content': '無法理解查詢內容'})()
-        
-        # 根據訊息內容選擇回應
-        for key, response in self.mock_responses["reason"].items():
-            if key in user_message:
-                return type('MockResponse', (), {'content': response})()
-        
-        return type('MockResponse', (), {'content': self.mock_responses["reason"]["default"]})()
+        if "分析" in content or "reason" in content.lower():
+            return type('obj', (object,), {'content': self.responses["reason"]})()
+        elif "SQL" in content or "生成" in content:
+            return type('obj', (object,), {'content': self.responses["sql"]})()
+        else:
+            return type('obj', (object,), {'content': self.responses["observe"]})()
 
 class SQLAgentMock:
     """
-    SQL Agent 模擬版本 - 具有 reason、action、observe 功能的 AI Agent
+    SQL Agent Mock 版本
     
-    使用 LangChain 和 LangGraph 開發，能夠：
-    - reason: 分析自然語言查詢意圖
-    - action: 生成並執行 SQL 查詢
-    - observe: 觀察結果並格式化回應
+    用於測試的模擬版本，不依賴真實的 LLM 和資料庫
     """
     
-    def __init__(self, db_path: str = "data/ai_agent.db"):
-        """初始化 SQL Agent"""
-        self.db_path = db_path
+    def __init__(self, mcp_server_url: str = "http://localhost:8001"):
+        """初始化 SQL Agent Mock"""
+        self.mcp_server_url = mcp_server_url
+        
+        # 初始化 Mock LLM
         self.llm = MockLLM()
         
         # 初始化 MCP Client
-        self.mcp_client = DatabaseMCPClient()
+        self.mcp_client = DatabaseMCPClient(mcp_server_url)
         self.mcp_connected = False
-        
-        # 初始化資料庫
-        self._init_database()
         
         # 建立 LangGraph 工作流程
         self.workflow = self._create_workflow()
     
-    def _init_database(self):
-        """初始化 SQLite 資料庫"""
-        # 確保 data 目錄存在
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
-        # 建立表格和範例資料
-        self._create_tables()
-        self._insert_sample_data()
-    
-    def _get_connection(self):
-        """取得新的資料庫連接"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-    
-    def _create_tables(self):
-        """建立資料庫表格"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 使用者表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE,
-                age INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # 產品表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                price REAL NOT NULL,
-                category TEXT,
-                stock INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # 訂單表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                product_id INTEGER,
-                quantity INTEGER,
-                total_price REAL,
-                order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (id),
-                FOREIGN KEY (product_id) REFERENCES products (id)
-            )
-        """)
-        
-        conn.commit()
-        conn.close()
-    
-    def _insert_sample_data(self):
-        """插入範例資料"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 檢查是否已有資料
-        cursor.execute("SELECT COUNT(*) FROM users")
-        if cursor.fetchone()[0] == 0:
-            # 插入使用者資料
-            users_data = [
-                ("張小明", "zhang@example.com", 25),
-                ("李小華", "li@example.com", 30),
-                ("王小美", "wang@example.com", 28),
-                ("陳小強", "chen@example.com", 35)
-            ]
-            cursor.executemany(
-                "INSERT INTO users (name, email, age) VALUES (?, ?, ?)",
-                users_data
-            )
+    async def _get_database_schema(self) -> str:
+        """從 MCP Server 取得資料庫結構資訊"""
+        try:
+            if not self.mcp_connected:
+                await self.mcp_client.connect()
+                self.mcp_connected = True
             
-            # 插入產品資料
-            products_data = [
-                ("iPhone 15", 29999.0, "手機", 50),
-                ("MacBook Pro", 59999.0, "筆電", 20),
-                ("AirPods Pro", 6999.0, "耳機", 100),
-                ("iPad Air", 19999.0, "平板", 30),
-                ("Apple Watch", 12999.0, "手錶", 40)
-            ]
-            cursor.executemany(
-                "INSERT INTO products (name, price, category, stock) VALUES (?, ?, ?, ?)",
-                products_data
-            )
+            schema = await self.mcp_client.get_schema()
+            tables = schema.get("tables", [])
             
-            # 插入訂單資料
-            orders_data = [
-                (1, 1, 2, 59998.0),
-                (2, 3, 1, 6999.0),
-                (3, 2, 1, 59999.0),
-                (1, 4, 1, 19999.0),
-                (4, 5, 1, 12999.0)
-            ]
-            cursor.executemany(
-                "INSERT INTO orders (user_id, product_id, quantity, total_price) VALUES (?, ?, ?, ?)",
-                orders_data
-            )
+            schema_info = []
+            for table in tables:
+                table_name = table.get("name", "")
+                columns = table.get("columns", [])
+                
+                schema_info.append(f"表格: {table_name}")
+                for col in columns:
+                    col_name = col.get("name", "")
+                    col_type = col.get("type", "")
+                    schema_info.append(f"  - {col_name} ({col_type})")
+                schema_info.append("")
             
-            conn.commit()
-        
-        conn.close()
-    
-    def _get_database_schema(self) -> str:
-        """取得資料庫結構資訊"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        schema_info = []
-        
-        # 取得所有表格
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        
-        for table in tables:
-            table_name = table[0]
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            columns = cursor.fetchall()
+            return "\n".join(schema_info)
             
-            schema_info.append(f"表格: {table_name}")
-            for col in columns:
-                schema_info.append(f"  - {col[1]} ({col[2]})")
-            schema_info.append("")
-        
-        conn.close()
-        return "\n".join(schema_info)
+        except Exception as e:
+            return f"無法取得資料庫結構: {str(e)}"
     
     def _create_workflow(self) -> StateGraph:
         """建立 LangGraph 工作流程"""
@@ -226,12 +97,33 @@ class SQLAgentMock:
             context: Dict[str, Any]
         
         # 1. REASON: 分析查詢意圖
-        def reason(state: AgentState) -> AgentState:
+        async def reason(state: AgentState) -> AgentState:
             """分析使用者查詢意圖"""
             query = state["query"]
+            schema = await self._get_database_schema()
             
-            # 使用模擬 LLM 進行分析
-            response = self.llm.invoke([HumanMessage(content=query)])
+            system_prompt = f"""
+            你是一個 SQL 查詢分析專家。請分析使用者的自然語言查詢，並理解其意圖。
+            
+            資料庫結構：
+            {schema}
+            
+            請分析以下查詢的意圖：
+            "{query}"
+            
+            請提供：
+            1. 查詢類型（SELECT、INSERT、UPDATE、DELETE、分析等）
+            2. 需要的表格
+            3. 查詢條件
+            4. 預期的結果格式
+            """
+            
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=query)
+            ]
+            
+            response = self.llm.invoke(messages)
             reasoning = response.content
             
             return {
@@ -243,13 +135,39 @@ class SQLAgentMock:
         async def action(state: AgentState) -> AgentState:
             """生成並執行 SQL 查詢"""
             query = state["query"]
+            reasoning = state["reasoning"]
+            schema = await self._get_database_schema()
             
-            # 根據查詢內容生成 SQL
-            sql_query = self._generate_sql_from_query(query)
+            system_prompt = f"""
+            你是一個 SQL 生成專家。根據使用者的查詢和分析結果，生成適當的 SQL 查詢。
             
-            # 執行 SQL 查詢
+            資料庫結構：
+            {schema}
+            
+            使用者查詢：{query}
+            分析結果：{reasoning}
+            
+            請生成對應的 SQL 查詢。只返回 SQL 語句，不要包含其他說明。
+            """
+            
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=query)
+            ]
+            
+            response = self.llm.invoke(messages)
+            sql_query = self._extract_sql_query(response.content)
+            
+            # 使用 MCP Client 執行 SQL 查詢
             try:
-                execution_result = self._execute_sql_query(sql_query)
+                # 確保 MCP Client 已連接
+                if not self.mcp_connected:
+                    await self.mcp_client.connect()
+                    self.mcp_connected = True
+                
+                # 通過 MCP 執行查詢
+                execution_result = await self.mcp_client.call_tool("execute_query", {"sql": sql_query})
+                
             except Exception as e:
                 execution_result = {
                     "type": "error",
@@ -267,20 +185,35 @@ class SQLAgentMock:
         def observe(state: AgentState) -> AgentState:
             """觀察執行結果並生成回應"""
             query = state["query"]
+            reasoning = state["reasoning"]
+            sql_query = state["sql_query"]
             execution_result = state["execution_result"]
             
-            if isinstance(execution_result, dict) and execution_result.get("type") == "error":
-                response = f"查詢執行時發生錯誤：{execution_result['error']}"
-            else:
-                # execution_result 是一個列表
-                result_list = execution_result if isinstance(execution_result, list) else []
-                response = f"查詢執行成功！共找到 {len(result_list)} 筆資料。"
-                if len(result_list) > 0:
-                    response += f"\n\n前 3 筆資料：\n{json.dumps(result_list[:3], ensure_ascii=False, indent=2)}"
+            system_prompt = f"""
+            你是一個資料分析專家。請根據 SQL 查詢結果，為使用者提供清晰、易懂的回應。
+            
+            使用者原始查詢：{query}
+            分析過程：{reasoning}
+            執行的 SQL：{sql_query}
+            查詢結果：{json.dumps(execution_result, ensure_ascii=False, indent=2)}
+            
+            請提供：
+            1. 簡潔明瞭的結果說明
+            2. 如果有資料，請用自然語言描述
+            3. 如果有錯誤，請解釋問題並提供建議
+            4. 保持專業但友善的語氣
+            """
+            
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"查詢結果：{json.dumps(execution_result, ensure_ascii=False)}")
+            ]
+            
+            response = self.llm.invoke(messages)
             
             return {
                 **state,
-                "response": response
+                "response": response.content
             }
         
         # 建立工作流程圖
@@ -299,36 +232,24 @@ class SQLAgentMock:
         
         return workflow.compile()
     
-    def _generate_sql_from_query(self, query: str) -> str:
-        """根據查詢內容生成 SQL"""
-        query_lower = query.lower()
+    def _extract_sql_query(self, llm_response: str) -> str:
+        """從 LLM 回應中提取 SQL 查詢"""
+        # 移除可能的 markdown 格式
+        sql_query = llm_response.strip()
         
-        if "使用者" in query or "用戶" in query or "user" in query_lower:
-            return "SELECT * FROM users"
-        elif "產品" in query or "商品" in query or "product" in query_lower:
-            return "SELECT * FROM products"
-        elif "訂單" in query or "order" in query_lower:
-            return "SELECT * FROM orders"
-        else:
-            return "SELECT * FROM users LIMIT 5"
-    
-    def _execute_sql_query(self, sql_query: str) -> List[Dict]:
-        """執行 SQL 查詢"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        # 如果被 ```sql 包圍，移除
+        if sql_query.startswith("```sql"):
+            sql_query = sql_query[6:]
+        if sql_query.endswith("```"):
+            sql_query = sql_query[:-3]
         
-        try:
-            cursor.execute(sql_query)
-            rows = cursor.fetchall()
-            
-            # 轉換為字典格式
-            result = []
-            for row in rows:
-                result.append(dict(row))
-            
-            return result
-        finally:
-            conn.close()
+        # 如果被 ``` 包圍，移除
+        if sql_query.startswith("```"):
+            sql_query = sql_query[3:]
+        if sql_query.endswith("```"):
+            sql_query = sql_query[:-3]
+        
+        return sql_query.strip()
     
     async def execute(self, query: str, context: Dict[str, Any] = {}) -> Dict[str, Any]:
         """
@@ -357,33 +278,27 @@ class SQLAgentMock:
         return {
             "response": result["response"],
             "sql_generated": result["sql_query"],
-            "data": result["execution_result"] if isinstance(result["execution_result"], dict) else {"rows": result["execution_result"]},
+            "data": result["execution_result"],
             "reasoning": result["reasoning"]
         }
     
-    def get_database_info(self) -> Dict[str, Any]:
+    async def get_database_info(self) -> Dict[str, Any]:
         """取得資料庫資訊"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 取得表格資訊
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        
-        table_info = {}
-        for table in tables:
-            table_name = table[0]
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-            count = cursor.fetchone()[0]
-            table_info[table_name] = {"row_count": count}
-        
-        conn.close()
-        
-        return {
-            "database_path": self.db_path,
-            "tables": table_info,
-            "schema": self._get_database_schema()
-        }
+        try:
+            if not self.mcp_connected:
+                await self.mcp_client.connect()
+                self.mcp_connected = True
+            
+            schema = await self.mcp_client.get_schema()
+            return {
+                "mcp_server_url": self.mcp_server_url,
+                "schema": schema
+            }
+        except Exception as e:
+            return {
+                "error": str(e),
+                "mcp_server_url": self.mcp_server_url
+            }
     
     async def close(self):
         """關閉 MCP Client 連接"""
@@ -393,4 +308,5 @@ class SQLAgentMock:
     
     def __del__(self):
         """解構函數"""
+        # 注意：這裡無法使用 await，所以只是標記
         pass 

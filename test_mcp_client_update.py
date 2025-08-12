@@ -1,27 +1,16 @@
 #!/usr/bin/env python3
 """
-簡單的 MCP Client 測試腳本
-
-測試 MCP Client 與外部 MCP Server 的連接
+測試更新後的 MCP Client 連接
 """
 
 import asyncio
 import json
-import sys
-import os
-
-# 添加專案根目錄到 Python 路徑
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from mcp.database_client import DatabaseMCPClient
 
 async def test_mcp_client():
-    """測試 MCP Client 與外部 MCP Server 的連接"""
+    """測試 MCP Client 連接"""
     print("🧪 測試 MCP Client 連接...")
     print("=" * 50)
-    print("📍 連接到外部 MCP Server: http://localhost:8001")
-    print("⚠️  請確保 MCP Server 正在運行")
-    print("-" * 50)
     
     async with DatabaseMCPClient() as client:
         try:
@@ -54,31 +43,16 @@ async def test_mcp_client():
             print(f"   查詢成功: {result.get('success', False)}")
             print(f"   資料筆數: {result.get('row_count', 0)}")
             
-            # 測試取得表格資訊
-            print("6. 測試取得表格資訊...")
-            table_info = await client.get_table_info("users")
-            print(f"   表格: {table_info.get('table_name', 'unknown')}")
-            print(f"   欄位數: {len(table_info.get('columns', []))}")
-            
-            # 測試取得範例資料
-            print("7. 測試取得範例資料...")
-            sample_data = await client.get_sample_data("products", 2)
-            print(f"   範例資料筆數: {sample_data.get('actual_count', 0)}")
-            
             print("\n✅ 所有測試通過！")
             
         except Exception as e:
             print(f"❌ 測試失敗: {e}")
             print(f"   錯誤類型: {type(e).__name__}")
-            print("\n💡 請確保：")
-            print("   1. MCP Server 正在 http://localhost:8001 運行")
-            print("   2. 網路連接正常")
-            print("   3. MCP Server 健康檢查通過")
             import traceback
             traceback.print_exc()
 
 def test_sync_client():
-    """測試同步版本的 MCP Client"""
+    """測試同步版本的客戶端"""
     print("\n🧪 測試同步版本 MCP Client...")
     print("=" * 50)
     
@@ -111,18 +85,9 @@ def test_sync_client():
         import traceback
         traceback.print_exc()
 
-async def main():
-    """主測試函數"""
-    print("🚀 開始 MCP Client 測試")
-    print("=" * 60)
-    
-    # 測試異步 MCP Client
-    await test_mcp_client()
-    
-    # 測試同步 MCP Client
-    test_sync_client()
-    
-    print("\n✅ 所有測試完成！")
-
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    # 測試異步版本
+    asyncio.run(test_mcp_client())
+    
+    # 測試同步版本
+    test_sync_client()

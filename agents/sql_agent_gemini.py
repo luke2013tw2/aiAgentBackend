@@ -1,21 +1,22 @@
+#!/usr/bin/env python3
+"""
+SQL Agent (Gemini 版本)
+
+使用 Google Gemini 模型和 LangGraph 開發的 SQL 查詢 Agent
+"""
+
 import os
-import sqlite3
-import asyncio
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 import json
-import threading
-
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.graph import StateGraph, END
-from langchain_core.runnables import RunnablePassthrough
+import asyncio
+from typing import Dict, Any, List
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-
+from langgraph.graph import StateGraph, END
 from mcp.database_client import DatabaseMCPClient
 
 class SQLAgentGemini:
     """
-    SQL Agent Gemini 版本 - 具有 reason、action、observe 功能的 AI Agent
+    SQL Agent (Gemini 版本)
     
     使用 LangChain 和 LangGraph 開發，能夠：
     - reason: 分析自然語言查詢意圖
@@ -23,9 +24,9 @@ class SQLAgentGemini:
     - observe: 觀察結果並格式化回應
     """
     
-    def __init__(self, db_path: str = "data/ai_agent.db"):
+    def __init__(self, mcp_server_url: str = "http://localhost:8001"):
         """初始化 SQL Agent"""
-        self.db_path = db_path
+        self.mcp_server_url = mcp_server_url
         
         # 初始化 Gemini LLM
         self.llm = ChatGoogleGenerativeAI(
@@ -35,147 +36,38 @@ class SQLAgentGemini:
         )
         
         # 初始化 MCP Client
-        self.mcp_client = DatabaseMCPClient()
+        self.mcp_client = DatabaseMCPClient(mcp_server_url)
         self.mcp_connected = False
-        
-        # 初始化資料庫
-        self._init_database()
         
         # 建立 LangGraph 工作流程
         self.workflow = self._create_workflow()
     
-    def _init_database(self):
-        """初始化 SQLite 資料庫"""
-        # 確保 data 目錄存在
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
-        # 建立表格和範例資料
-        self._create_tables()
-        self._insert_sample_data()
-    
-    def _get_connection(self):
-        """取得新的資料庫連接"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-    
-    def _create_tables(self):
-        """建立資料庫表格"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 使用者表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE,
-                age INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # 產品表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                price REAL NOT NULL,
-                category TEXT,
-                stock INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # 訂單表格
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                product_id INTEGER,
-                quantity INTEGER,
-                total_price REAL,
-                order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (id),
-                FOREIGN KEY (product_id) REFERENCES products (id)
-            )
-        """)
-        
-        conn.commit()
-        conn.close()
-    
-    def _insert_sample_data(self):
-        """插入範例資料"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 檢查是否已有資料
-        cursor.execute("SELECT COUNT(*) FROM users")
-        if cursor.fetchone()[0] == 0:
-            # 插入使用者資料
-            users_data = [
-                ("張小明", "zhang@example.com", 25),
-                ("李小華", "li@example.com", 30),
-                ("王小美", "wang@example.com", 28),
-                ("陳小強", "chen@example.com", 35)
-            ]
-            cursor.executemany(
-                "INSERT INTO users (name, email, age) VALUES (?, ?, ?)",
-                users_data
-            )
+    async def _get_database_schema(self) -> str:
+        """從 MCP Server 取得資料庫結構資訊"""
+        try:
+            if not self.mcp_connected:
+                await self.mcp_client.connect()
+                self.mcp_connected = True
             
-            # 插入產品資料
-            products_data = [
-                ("iPhone 15", 29999.0, "手機", 50),
-                ("MacBook Pro", 59999.0, "筆電", 20),
-                ("AirPods Pro", 6999.0, "耳機", 100),
-                ("iPad Air", 19999.0, "平板", 30),
-                ("Apple Watch", 12999.0, "手錶", 40)
-            ]
-            cursor.executemany(
-                "INSERT INTO products (name, price, category, stock) VALUES (?, ?, ?, ?)",
-                products_data
-            )
+            schema = await self.mcp_client.get_schema()
+            tables = schema.get("tables", [])
             
-            # 插入訂單資料
-            orders_data = [
-                (1, 1, 2, 59998.0),
-                (2, 3, 1, 6999.0),
-                (3, 2, 1, 59999.0),
-                (1, 4, 1, 19999.0),
-                (4, 5, 1, 12999.0)
-            ]
-            cursor.executemany(
-                "INSERT INTO orders (user_id, product_id, quantity, total_price) VALUES (?, ?, ?, ?)",
-                orders_data
-            )
+            schema_info = []
+            for table in tables:
+                table_name = table.get("name", "")
+                columns = table.get("columns", [])
+                
+                schema_info.append(f"表格: {table_name}")
+                for col in columns:
+                    col_name = col.get("name", "")
+                    col_type = col.get("type", "")
+                    schema_info.append(f"  - {col_name} ({col_type})")
+                schema_info.append("")
             
-            conn.commit()
-        
-        conn.close()
-    
-    def _get_database_schema(self) -> str:
-        """取得資料庫結構資訊"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        schema_info = []
-        
-        # 取得所有表格
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        
-        for table in tables:
-            table_name = table[0]
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            columns = cursor.fetchall()
+            return "\n".join(schema_info)
             
-            schema_info.append(f"表格: {table_name}")
-            for col in columns:
-                schema_info.append(f"  - {col[1]} ({col[2]})")
-            schema_info.append("")
-        
-        conn.close()
-        return "\n".join(schema_info)
+        except Exception as e:
+            return f"無法取得資料庫結構: {str(e)}"
     
     def _create_workflow(self) -> StateGraph:
         """建立 LangGraph 工作流程"""
@@ -189,13 +81,14 @@ class SQLAgentGemini:
             sql_query: str
             execution_result: Any
             response: str
+            chart_description: str
             context: Dict[str, Any]
         
         # 1. REASON: 分析查詢意圖
-        def reason(state: AgentState) -> AgentState:
+        async def reason(state: AgentState) -> AgentState:
             """分析使用者查詢意圖"""
             query = state["query"]
-            schema = self._get_database_schema()
+            schema = await self._get_database_schema()
             
             system_prompt = f"""
             你是一個 SQL 查詢分析專家。請分析使用者的自然語言查詢，並理解其意圖。
@@ -231,7 +124,7 @@ class SQLAgentGemini:
             """生成並執行 SQL 查詢"""
             query = state["query"]
             reasoning = state["reasoning"]
-            schema = self._get_database_schema()
+            schema = await self._get_database_schema()
             
             system_prompt = f"""
             你是一個 SQL 生成專家。根據使用者的查詢和分析結果，生成適當的 SQL 查詢。
@@ -284,24 +177,28 @@ class SQLAgentGemini:
             sql_query = state["sql_query"]
             execution_result = state["execution_result"]
             
+            # 格式化查詢結果，特別是多筆資料的顯示
+            formatted_result = self._format_execution_result(execution_result)
+            
             system_prompt = f"""
             你是一個資料分析專家。請根據 SQL 查詢結果，為使用者提供清晰、易懂的回應。
             
             使用者原始查詢：{query}
             分析過程：{reasoning}
             執行的 SQL：{sql_query}
-            查詢結果：{json.dumps(execution_result, ensure_ascii=False, indent=2)}
+            查詢結果：{formatted_result}
             
             請提供：
             1. 簡潔明瞭的結果說明
-            2. 如果有資料，請用自然語言描述
+            2. 如果有資料，請用自然語言描述，並以列表形式呈現多筆資料
             3. 如果有錯誤，請解釋問題並提供建議
             4. 保持專業但友善的語氣
+            5. 對於多筆資料，請使用編號列表（1. 2. 3.）來呈現
             """
             
             messages = [
                 SystemMessage(content=system_prompt),
-                HumanMessage(content=f"查詢結果：{json.dumps(execution_result, ensure_ascii=False)}")
+                HumanMessage(content=f"查詢結果：{formatted_result}")
             ]
             
             response = self.llm.invoke(messages)
@@ -311,6 +208,62 @@ class SQLAgentGemini:
                 "response": response.content
             }
         
+        # 4. VISUALIZE: 如果有多筆資料，生成圖表
+        async def visualize(state: AgentState) -> AgentState:
+            """如果有多筆資料，生成圖表"""
+            execution_result = state["execution_result"]
+            query = state["query"]
+            
+            # 檢查是否有多筆資料需要生成圖表
+            should_generate_chart = self._should_generate_chart(execution_result)
+            
+            if not should_generate_chart:
+                return {
+                    **state,
+                    "chart_description": "無需生成圖表"
+                }
+            
+            # 格式化資料用於圖表生成
+            chart_data = self._prepare_chart_data(execution_result)
+            
+            system_prompt = f"""
+            你是一個資料視覺化專家。請根據以下資料生成適合的圖表描述。
+            
+            使用者查詢：{query}
+            資料內容：{chart_data}
+            
+            請提供：
+            1. 建議的圖表類型（柱狀圖、折線圖、圓餅圖、散點圖等）
+            2. 圖表的標題和軸標籤
+            3. 圖表的顏色建議
+            4. 圖表的關鍵洞察點
+            5. 使用 Mermaid 語法生成圖表代碼
+            
+            請以以下格式回應：
+            ## 圖表建議
+            [圖表類型說明]
+            
+            ## 圖表代碼 (Mermaid)
+            ```mermaid
+            [Mermaid 圖表代碼]
+            ```
+            
+            ## 關鍵洞察
+            [資料分析洞察]
+            """
+            
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"請為以下資料生成圖表：{chart_data}")
+            ]
+            
+            chart_response = self.llm.invoke(messages)
+            
+            return {
+                **state,
+                "chart_description": chart_response.content
+            }
+        
         # 建立工作流程圖
         workflow = StateGraph(AgentState)
         
@@ -318,12 +271,14 @@ class SQLAgentGemini:
         workflow.add_node("reason", reason)
         workflow.add_node("action", action)
         workflow.add_node("observe", observe)
+        workflow.add_node("visualize", visualize)
         
         # 設定流程
         workflow.set_entry_point("reason")
         workflow.add_edge("reason", "action")
         workflow.add_edge("action", "observe")
-        workflow.add_edge("observe", END)
+        workflow.add_edge("observe", "visualize")
+        workflow.add_edge("visualize", END)
         
         return workflow.compile()
     
@@ -346,23 +301,119 @@ class SQLAgentGemini:
         
         return sql_query.strip()
     
-    def _execute_sql_query(self, sql_query: str) -> List[Dict]:
-        """執行 SQL 查詢"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
+    def _format_execution_result(self, execution_result: Any) -> str:
+        """格式化執行結果，特別是多筆資料的顯示"""
+        if not execution_result:
+            return "無查詢結果"
         
-        try:
-            cursor.execute(sql_query)
-            rows = cursor.fetchall()
+        # 如果是錯誤結果
+        if isinstance(execution_result, dict) and execution_result.get("type") == "error":
+            return f"執行錯誤: {execution_result.get('error', '未知錯誤')}"
+        
+        # 如果是成功結果
+        if isinstance(execution_result, dict) and execution_result.get("success"):
+            data = execution_result.get("data", {})
+            row_count = execution_result.get("row_count", 0)
             
-            # 轉換為字典格式
-            result = []
-            for row in rows:
-                result.append(dict(row))
+            if row_count == 0:
+                return "查詢成功，但沒有找到符合條件的資料"
             
-            return result
-        finally:
-            conn.close()
+            # 格式化多筆資料
+            if isinstance(data, dict) and "rows" in data:
+                rows = data["rows"]
+                if len(rows) == 1:
+                    # 單筆資料
+                    return f"查詢成功，找到 1 筆資料：\n{json.dumps(rows[0], ensure_ascii=False, indent=2)}"
+                else:
+                    # 多筆資料 - 使用列表格式
+                    formatted_rows = []
+                    for i, row in enumerate(rows, 1):
+                        row_str = ", ".join([f"{k}: {v}" for k, v in row.items()])
+                        formatted_rows.append(f"{i}. {row_str}")
+                    
+                    return f"查詢成功，找到 {len(rows)} 筆資料：\n" + "\n".join(formatted_rows)
+            
+            # 其他格式的資料
+            return f"查詢成功，找到 {row_count} 筆資料：\n{json.dumps(data, ensure_ascii=False, indent=2)}"
+        
+        # 其他格式的結果
+        return json.dumps(execution_result, ensure_ascii=False, indent=2)
+    
+    def _should_generate_chart(self, execution_result: Any) -> bool:
+        """判斷是否需要生成圖表"""
+        if not execution_result:
+            return False
+        
+        # 如果是錯誤結果，不需要生成圖表
+        if isinstance(execution_result, dict) and execution_result.get("type") == "error":
+            return False
+        
+        # 如果是成功結果且有資料
+        if isinstance(execution_result, dict) and execution_result.get("success"):
+            data = execution_result.get("data", {})
+            row_count = execution_result.get("row_count", 0)
+            
+            # 需要至少 2 筆資料才生成圖表
+            if row_count >= 2:
+                # 檢查是否有數值型欄位適合繪圖
+                if isinstance(data, dict) and "rows" in data and len(data["rows"]) > 0:
+                    first_row = data["rows"][0]
+                    # 檢查是否有數值型欄位
+                    numeric_fields = []
+                    for key, value in first_row.items():
+                        if isinstance(value, (int, float)) and key not in ['id']:
+                            numeric_fields.append(key)
+                    
+                    return len(numeric_fields) > 0
+        
+        return False
+    
+    def _prepare_chart_data(self, execution_result: Any) -> str:
+        """準備圖表資料"""
+        if not execution_result or not isinstance(execution_result, dict):
+            return "無效的資料"
+        
+        data = execution_result.get("data", {})
+        if not isinstance(data, dict) or "rows" not in data:
+            return "無資料行"
+        
+        rows = data["rows"]
+        if not rows:
+            return "空資料"
+        
+        # 分析資料結構
+        first_row = rows[0]
+        columns = list(first_row.keys())
+        
+        # 分類欄位類型
+        numeric_fields = []
+        text_fields = []
+        for key, value in first_row.items():
+            if isinstance(value, (int, float)) and key not in ['id']:
+                numeric_fields.append(key)
+            elif isinstance(value, str) and key not in ['id']:
+                text_fields.append(key)
+        
+        # 格式化資料摘要
+        summary = f"""
+資料摘要：
+- 總筆數: {len(rows)}
+- 欄位數: {len(columns)}
+- 數值型欄位: {', '.join(numeric_fields) if numeric_fields else '無'}
+- 文字型欄位: {', '.join(text_fields) if text_fields else '無'}
+
+前 5 筆資料範例：
+"""
+        
+        # 添加前 5 筆資料
+        for i, row in enumerate(rows[:5], 1):
+            row_str = ", ".join([f"{k}: {v}" for k, v in row.items()])
+            summary += f"{i}. {row_str}\n"
+        
+        if len(rows) > 5:
+            summary += f"... 還有 {len(rows) - 5} 筆資料"
+        
+        return summary
     
     async def execute(self, query: str, context: Dict[str, Any] = {}) -> Dict[str, Any]:
         """
@@ -382,6 +433,7 @@ class SQLAgentGemini:
             "sql_query": "",
             "execution_result": None,
             "response": "",
+            "chart_description": "",
             "context": context
         }
         
@@ -391,33 +443,28 @@ class SQLAgentGemini:
         return {
             "response": result["response"],
             "sql_generated": result["sql_query"],
-            "data": result["execution_result"] if isinstance(result["execution_result"], dict) else {"rows": result["execution_result"]},
-            "reasoning": result["reasoning"]
+            "data": result["execution_result"],
+            "reasoning": result["reasoning"],
+            "chart_description": result.get("chart_description", "")
         }
     
-    def get_database_info(self) -> Dict[str, Any]:
+    async def get_database_info(self) -> Dict[str, Any]:
         """取得資料庫資訊"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        # 取得表格資訊
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = cursor.fetchall()
-        
-        table_info = {}
-        for table in tables:
-            table_name = table[0]
-            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-            count = cursor.fetchone()[0]
-            table_info[table_name] = {"row_count": count}
-        
-        conn.close()
-        
-        return {
-            "database_path": self.db_path,
-            "tables": table_info,
-            "schema": self._get_database_schema()
-        }
+        try:
+            if not self.mcp_connected:
+                await self.mcp_client.connect()
+                self.mcp_connected = True
+            
+            schema = await self.mcp_client.get_schema()
+            return {
+                "mcp_server_url": self.mcp_server_url,
+                "schema": schema
+            }
+        except Exception as e:
+            return {
+                "error": str(e),
+                "mcp_server_url": self.mcp_server_url
+            }
     
     async def close(self):
         """關閉 MCP Client 連接"""
@@ -427,4 +474,5 @@ class SQLAgentGemini:
     
     def __del__(self):
         """解構函數"""
+        # 注意：這裡無法使用 await，所以只是標記
         pass 
